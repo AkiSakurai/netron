@@ -144,6 +144,31 @@ grapher.Graph = class {
         for (const nodeId of this.nodes.keys()) {
             const node = this.node(nodeId);
             if (this.children(nodeId).length == 0) {
+                node.label.buildText(document, nodeGroup);
+            }
+        }
+
+
+        for (const edge of this.edges.values()) {
+            edge.label.buildText(document, edgePathGroup);
+        }
+
+
+        for (const nodeId of this.nodes.keys()) {
+            const node = this.node(nodeId);
+            if (this.children(nodeId).length == 0) {
+                node.label.measureText();
+            }
+        }
+
+        for (const edge of this.edges.values()) {
+            edge.label.measureText();
+        }
+
+
+        for (const nodeId of this.nodes.keys()) {
+            const node = this.node(nodeId);
+            if (this.children(nodeId).length == 0) {
                 // node
                 node.label.build(document, nodeGroup);
             }
@@ -236,6 +261,18 @@ grapher.Node = class {
         this.layout();
     }
 
+    buildText(document, root) {
+        for (let i = 0; i < this._blocks.length; i++) {
+            this._blocks[i].buildText(document, root);
+        }
+    }
+
+    measureText() {
+        for (let i = 0; i < this._blocks.length; i++) {
+            this._blocks[i].measureText();
+        }
+    }
+
     layout() {
         const width = Math.max(...this._blocks.map((block) => block.width));
         let height = 0;
@@ -246,9 +283,9 @@ grapher.Node = class {
             height = height + block.height;
         }
         this.border.setAttribute('d', grapher.Node.roundedRect(0, 0, width, height, true, true, true, true));
-        const nodeBox = this.element.getBBox();
-        this.width = nodeBox.width;
-        this.height = nodeBox.height;
+
+        this.width = width;
+        this.height = height;
     }
 
     update() {
@@ -304,6 +341,18 @@ grapher.Node.Header = class {
         if (!this.first) {
             this.line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
             parent.appendChild(this.line);
+        }
+    }
+
+    buildText(document, root) {
+        for (const entry of this._entries) {
+            entry.buildText(document, root);
+        }
+    }
+
+    measureText() {
+        for (const entry of this._entries) {
+            entry.measureText();
         }
     }
 
@@ -384,7 +433,6 @@ grapher.Node.Header.Entry = class {
         this.element = document.createElementNS('http://www.w3.org/2000/svg', 'g');
         parent.appendChild(this.element);
         this.path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-        this.text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
         this.element.appendChild(this.path);
         this.element.appendChild(this.text);
         const classList = [ 'node-item' ];
@@ -403,14 +451,24 @@ grapher.Node.Header.Entry = class {
             titleElement.textContent = this.tooltip;
             this.element.appendChild(titleElement);
         }
-        if (this.content) {
-            this.text.textContent = this.content;
-        }
-        const boundingBox = this.text.getBBox();
+
+        const boundingBox = this._bbox;
         this.width = boundingBox.width + xPadding + xPadding;
         this.height = boundingBox.height + yPadding + yPadding;
         this.tx = xPadding;
         this.ty = yPadding - boundingBox.y;
+    }
+
+    buildText(document, root) {
+        this.text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        root.appendChild(this.text)
+        if (this.content) {
+            this.text.textContent = this.content;
+        }
+    }
+
+    measureText() {
+        this._bbox = this.text.getBBox();
     }
 };
 
@@ -419,6 +477,7 @@ grapher.Node.List = class {
     constructor() {
         this._items = [];
         this._events = {};
+        this._textElementsWithBBox = []; // {element, bbox}
     }
 
     add(id, name, value, tooltip, separator) {
@@ -456,15 +515,34 @@ grapher.Node.List = class {
         this.element.appendChild(this.background);
         parent.appendChild(this.element);
         this.height += 3;
-        for (const item of this._items) {
+        for (const elementWithBBox of this._textElementsWithBBox) {
             const yPadding = 1;
             const xPadding = 6;
+            this.element.appendChild(elementWithBBox.element);
+            const size = elementWithBBox.bbox;
+            const width = xPadding + size.width + xPadding;
+            this.width = Math.max(width, this.width);
+            elementWithBBox.element.setAttribute('x', x + xPadding);
+            elementWithBBox.element.setAttribute('y', this.height + yPadding - size.y);
+            this.height += yPadding + size.height + yPadding;
+        }
+        this.height += 3;
+        this.width = Math.max(75, this.width);
+        if (!this.first) {
+            this.line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+            this.line.setAttribute('class', 'node');
+            this.element.appendChild(this.line);
+        }
+    }
+
+    buildText(document, root) {
+        for (const item of this._items) {
             const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+            root.appendChild(text)
             if (item.id) {
                 text.setAttribute('id', item.id);
             }
             text.setAttribute('xml:space', 'preserve');
-            this.element.appendChild(text);
             if (item.tooltip) {
                 const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
                 title.textContent = item.tooltip;
@@ -479,19 +557,13 @@ grapher.Node.List = class {
             const textValueElement = document.createElementNS('http://www.w3.org/2000/svg', 'tspan');
             textValueElement.textContent = item.separator + item.value;
             text.appendChild(textValueElement);
-            const size = text.getBBox();
-            const width = xPadding + size.width + xPadding;
-            this.width = Math.max(width, this.width);
-            text.setAttribute('x', x + xPadding);
-            text.setAttribute('y', this.height + yPadding - size.y);
-            this.height += yPadding + size.height + yPadding;
+            this._textElementsWithBBox.push({element: text})
         }
-        this.height += 3;
-        this.width = Math.max(75, this.width);
-        if (!this.first) {
-            this.line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-            this.line.setAttribute('class', 'node');
-            this.element.appendChild(this.line);
+    }
+
+    measureText() {
+        for (const text of this._textElementsWithBBox) {
+            text.bbox = text.element.getBBox();
         }
     }
 
@@ -528,6 +600,12 @@ grapher.Node.Canvas = class {
     build(/* document, parent */) {
     }
 
+    buildText(/* document, root */) {
+    }
+
+    measureText() {
+    }
+
     update(/* parent, top, width , first, last */) {
     }
 };
@@ -553,7 +631,21 @@ grapher.Edge = class {
         }
         this.element.setAttribute('class', this.class ? 'edge-path ' + this.class : 'edge-path');
         edgePathGroupElement.appendChild(this.element);
+
+        if(this.labelElement) {
+            edgePathGroupElement.appendChild(this.labelElement);
+
+            const edgeBox = this._bbox;
+            this.width = edgeBox.width;
+            this.height = edgeBox.height;
+        }
+    }
+
+    buildText(document, root) {
         if (this.label) {
+            const createElement = (name) => {
+                return document.createElementNS('http://www.w3.org/2000/svg', name);
+            };
             const tspan = createElement('tspan');
             tspan.setAttribute('xml:space', 'preserve');
             tspan.setAttribute('dy', '1em');
@@ -566,10 +658,14 @@ grapher.Edge = class {
             if (this.id) {
                 this.labelElement.setAttribute('id', 'edge-label-' + this.id);
             }
-            edgeLabelGroupElement.appendChild(this.labelElement);
-            const edgeBox = this.labelElement.getBBox();
-            this.width = edgeBox.width;
-            this.height = edgeBox.height;
+            root.appendChild(this.labelElement);
+
+        }
+    }
+
+    measureText() {
+        if(this.labelElement) {
+            this._bbox = this.labelElement.getBBox();
         }
     }
 
